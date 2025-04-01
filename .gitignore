@@ -5,6 +5,8 @@
 *.iml
 .idea
 
+package-lock.json
+
 # npm
 node_modules
 

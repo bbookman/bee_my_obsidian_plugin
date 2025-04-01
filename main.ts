@@ -70,11 +70,9 @@ export default class BeePlugin extends Plugin {
 		}
 
 		try {
-			// Ensure the folder exists
 			const folderPath = normalizePath(this.settings.folderPath);
 			await this.ensureFolderExists(folderPath);
 
-			// Get the last synced date
 			const lastSyncedDate = await this.getLastSyncedDate();
 			const startDate = lastSyncedDate || new Date(this.settings.startDate);
 			const endDate = new Date();
@@ -87,9 +85,9 @@ export default class BeePlugin extends Plugin {
 				const logs = await this.api.getBeeDaily(currentDate);
 
 				if (logs && logs.length > 0) {
-					// const content = logs.map(log => this.formatLifelogMarkdown(log)).join('\n\n');
+					const content = `# ${dateStr}\n\n${logs.map(log => log.content).join('\n\n')}`;
 					const filePath = `${folderPath}/${dateStr}.md`;
-					await this.app.vault.adapter.write(filePath, content); // need content to write
+					await this.app.vault.adapter.write(filePath, content);
 					new Notice(`Synced entries for ${dateStr}`);
 				}
 
@@ -192,6 +190,7 @@ class BeeAPI {
 		const allBeeDaily: any[] = [];
 		let currentPage = 1;
 		let totalPages = 1;
+		const targetDateStr = date.toISOString().split('T')[0];
 
 		do {
 			const params = new URLSearchParams({
@@ -215,12 +214,19 @@ class BeeAPI {
 
 				const data = response.json;
 				const dailyinfo = data.data?.dailyinfo || [];
-				allBeeDaily.push(...dailyinfo);
+				
+				// Filter entries for the target date
+				const filteredDailyInfo = dailyinfo.filter((entry: any) => {
+					const entryDate = new Date(entry.date).toISOString().split('T')[0];
+					return entryDate === targetDateStr;
+				});
+				
+				allBeeDaily.push(...filteredDailyInfo);
 
 				// Update pagination info
 				currentPage = data.meta?.currentPage || 1;
 				totalPages = data.meta?.totalPages || 1;
-				currentPage++; // Move to next page
+				currentPage++;
 
 			} catch (error) {
 				console.error('Error fetching Bee Daily entries:', error);
