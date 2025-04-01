@@ -2,28 +2,28 @@ import { App, Plugin, PluginSettingTab, Setting, normalizePath, Notice, requestU
 
 // Remember to rename these classes and interfaces!
 
-interface LimitlessLifelogsSettings {
+interface BeeObsidianSettings{
 	apiKey: string;
 	folderPath: string;
 	startDate: string;
 }
 
-const DEFAULT_SETTINGS: LimitlessLifelogsSettings = {
+const DEFAULT_SETTINGS: BeeObsidianSettings = {
 	apiKey: '',
-	folderPath: 'Limitless Lifelogs',
+	folderPath: 'Bee Daily',
 	startDate: '2025-02-09'
 }
 
-export default class LimitlessLifelogsPlugin extends Plugin {
-	settings: LimitlessLifelogsSettings;
-	api: LimitlessAPI;
+export default class  BeePlugin extends Plugin {
+	settings: BeeObsidianSettings;
+	api: BeeAPI;
 
 	async onload() {
 		await this.loadSettings();
-		this.api = new LimitlessAPI(this.settings.apiKey);
+		this.api = new BeeAPI(this.settings.apiKey);
 
 		// Add settings tab
-		this.addSettingTab(new LimitlessLifelogsSettingTab(this.app, this));
+		this.addSettingTab(new BeeObsiadianSettingTab(this.app, this));
 
 		// Add ribbon icon for syncing
 		this.addRibbonIcon('sync', 'Sync Limitless Lifelogs', async () => {
@@ -55,9 +55,9 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 		}
 	}
 
-	async syncLifelogs() {
+	async syncBeeDaily() {
 		if (!this.settings.apiKey) {
-			new Notice('Please set your Limitless API key in settings');
+			new Notice('Please set your Bee API key in settings');
 			return;
 		}
 
@@ -71,27 +71,27 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 			const startDate = lastSyncedDate || new Date(this.settings.startDate);
 			const endDate = new Date();
 
-			new Notice('Starting Limitless lifelog sync...');
+			new Notice('Starting Bee Daily sync...');
 
 			const currentDate = new Date(startDate);
 			while (currentDate <= endDate) {
 				const dateStr = currentDate.toISOString().split('T')[0];
-				const logs = await this.api.getLifelogs(currentDate);
+				const logs = await this.api.getBeeDaily(currentDate);
 
 				if (logs && logs.length > 0) {
-					const content = logs.map(log => this.formatLifelogMarkdown(log)).join('\n\n');
+					// const content = logs.map(log => this.formatLifelogMarkdown(log)).join('\n\n');
 					const filePath = `${folderPath}/${dateStr}.md`;
-					await this.app.vault.adapter.write(filePath, content);
+					await this.app.vault.adapter.write(filePath, content); // need content to write
 					new Notice(`Synced entries for ${dateStr}`);
 				}
 
 				currentDate.setDate(currentDate.getDate() + 1);
 			}
 
-			new Notice('Limitless lifelog sync complete!');
+			new Notice('Bee Daily sync complete!');
 		} catch (error) {
-			console.error('Error syncing lifelogs:', error);
-			new Notice('Error syncing Limitless lifelogs. Check console for details.');
+			console.error('Error syncing Bee Days:', error);
+			new Notice('Error syncing Bee Days. Check console for details.');
 		}
 	}
 
@@ -101,7 +101,7 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 			await this.app.vault.createFolder(path);
 		}
 	}
-
+// assists in avoidance of overwriting files
 	private async getLastSyncedDate(): Promise<Date | null> {
 		const folderPath = normalizePath(this.settings.folderPath);
 		try {
@@ -118,7 +118,8 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 		}
 	}
 
-	private formatLifelogMarkdown(lifelog: any): string {
+	// Below needs modification for Bee data, if the data comes with markdown
+	private formatBeeMarkdown(lifelog: any): string {
 		if (lifelog.markdown) {
 			return lifelog.markdown;
 		}
@@ -179,10 +180,10 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 	}
 }
 
-class LimitlessLifelogsSettingTab extends PluginSettingTab {
-	plugin: LimitlessLifelogsPlugin;
+class SettingTab extends PluginSettingTab {
+	plugin: BeePlugin;
 
-	constructor(app: App, plugin: LimitlessLifelogsPlugin) {
+	constructor(app: App, plugin: BeePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -193,9 +194,9 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('API Key')
-			.setDesc('Your Limitless AI API key')
+			.setDesc('Your Bee AI API key')
 			.addText(text => text
-				.setPlaceholder('Enter your API key')
+				.setPlaceholder('Enter your BeeAPI key')
 				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
 					this.plugin.settings.apiKey = value;
@@ -204,7 +205,7 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Folder Path')
-			.setDesc('Where to store the lifelog entries')
+			.setDesc('Where to store the Bee Daily files')
 			.addText(text => text
 				.setPlaceholder('Folder path')
 				.setValue(this.plugin.settings.folderPath)
@@ -226,10 +227,10 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 	}
 }
 
-class LimitlessAPI {
+class BeeAPI {
 	private apiKey: string;
-	private baseUrl = 'https://api.limitless.ai';
-	private batchSize = 10;
+	private baseUrl = 'https://api.bee.computer';
+	private limit = 10;
 
 	constructor(apiKey: string) {
 		this.apiKey = apiKey;
@@ -239,16 +240,13 @@ class LimitlessAPI {
 		this.apiKey = apiKey;
 	}
 
-	async getLifelogs(date: Date): Promise<any[]> {
-		const allLifelogs: any[] = [];
-		let cursor: string | null = null;
+	async getBeeDaily(date: Date): Promise<any[]> {
+		const allBeeDaily: any[] = [];
+		let limit: string | null = null;
+		let page: string | null = null;
 
 		const params = new URLSearchParams({
-			date: date.toISOString().split('T')[0],
-			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-			includeMarkdown: 'true',
-			includeHeadings: 'true',
-			direction: 'asc',
+			page: this.page.toString(),
 			limit: this.batchSize.toString()
 		});
 
@@ -273,7 +271,7 @@ class LimitlessAPI {
 
 				const data = response.json;
 				const lifelogs = data.data?.lifelogs || [];
-				allLifelogs.push(...lifelogs);
+				allBeeDaily.push(...lifelogs);
 
 				cursor = data.meta?.lifelogs?.nextCursor || null;
 			} catch (error) {
