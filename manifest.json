@@ -1,10 +1,10 @@
 {
-	"id": "limitless-lifelogs",
-	"name": "Limitless Lifelogs",
-	"version": "1.0.4",
-	"minAppVersion": "0.15.0",
-	"description": "Sync your Limitless AI lifelog entries",
-	"author": "Maclean Dunkin",
-	"authorUrl": "https://github.com/Maclean-D",
+	"id": "Bee_Days",
+	"name": "Bee to Obsidian",
+	"version": "0.0.1",
+	"minAppVersion": "0.0.1",
+	"description": "Sync your Bee.computer data with Obsidian.",
+	"author": "Bruce Bookman",
+	"authorUrl": "https://github.com/bbookman",
 	"isDesktopOnly": false
 }
