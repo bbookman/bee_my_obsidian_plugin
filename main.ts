@@ -1,6 +1,14 @@
-import { App, Plugin, PluginSettingTab, Setting, normalizePath, Notice, requestUrl } from 'obsidian';
-
-// Remember to rename these classes and interfaces!
+import { 
+    App, 
+    Plugin, 
+    PluginSettingTab, 
+    Setting, 
+    normalizePath, 
+    Notice, 
+    requestUrl,
+    addIcon,
+    TFile
+} from 'obsidian';
 
 interface BeeObsidianSettings{
 	apiKey: string;
@@ -14,7 +22,7 @@ const DEFAULT_SETTINGS: BeeObsidianSettings = {
 	startDate: '2025-02-09'
 }
 
-export default class  BeePlugin extends Plugin {
+export default class BeePlugin extends Plugin {
 	settings: BeeObsidianSettings;
 	api: BeeAPI;
 
@@ -23,19 +31,19 @@ export default class  BeePlugin extends Plugin {
 		this.api = new BeeAPI(this.settings.apiKey);
 
 		// Add settings tab
-		this.addSettingTab(new BeeObsiadianSettingTab(this.app, this));
+		this.addSettingTab(new BeeObsidianSettingTab(this.app, this));
 
 		// Add ribbon icon for syncing
-		this.addRibbonIcon('sync', 'Sync Limitless Lifelogs', async () => {
-			await this.syncLifelogs();
+		this.addRibbonIcon('sync', 'Sync Bee Daily', async () => {
+			await this.syncBeeDaily();
 		});
 
 		// Add command for syncing
 		this.addCommand({
-			id: 'sync-limitless-lifelogs',
-			name: 'Sync Limitless Lifelogs',
+			id: 'sync-bee-daily',
+			name: 'Sync Bee Daily',
 			callback: async () => {
-				await this.syncLifelogs();
+				await this.syncBeeDaily();
 			}
 		});
 	}
@@ -117,70 +125,10 @@ export default class  BeePlugin extends Plugin {
 			return null;
 		}
 	}
-
-	// Below needs modification for Bee data, if the data comes with markdown
-	private formatBeeMarkdown(lifelog: any): string {
-		if (lifelog.markdown) {
-			return lifelog.markdown;
-		}
-
-		const content: string[] = [];
-
-		if (lifelog.title) {
-			content.push(`# ${lifelog.title}\n`);
-		}
-
-		if (lifelog.contents) {
-			let currentSection = '';
-			let sectionMessages: string[] = [];
-
-			for (const node of lifelog.contents) {
-				if (node.type === 'heading2') {
-					if (currentSection && sectionMessages.length > 0) {
-						content.push(`## ${currentSection}\n`);
-						content.push(...sectionMessages);
-						content.push('');
-					}
-					currentSection = node.content;
-					sectionMessages = [];
-				} else if (node.type === 'blockquote') {
-					const speaker = node.speakerName || 'Speaker';
-					let timestamp = '';
-					if (node.startTime) {
-						const dt = new Date(node.startTime);
-						timestamp = dt.toLocaleString('en-US', {
-							month: '2-digit',
-							day: '2-digit',
-							year: '2-digit',
-							hour: 'numeric',
-							minute: '2-digit',
-							hour12: true
-						});
-						timestamp = `(${timestamp})`;
-					}
-
-					const message = `- ${speaker} ${timestamp}: ${node.content}`;
-					if (currentSection) {
-						sectionMessages.push(message);
-					} else {
-						content.push(message);
-					}
-				} else if (node.type !== 'heading1') {
-					content.push(node.content);
-				}
-			}
-
-			if (currentSection && sectionMessages.length > 0) {
-				content.push(`## ${currentSection}\n`);
-				content.push(...sectionMessages);
-			}
-		}
-
-		return content.join('\n\n');
-	}
 }
 
-class SettingTab extends PluginSettingTab {
+// Rename SettingTab to BeeObsidianSettingTab
+class BeeObsidianSettingTab extends PluginSettingTab {
 	plugin: BeePlugin;
 
 	constructor(app: App, plugin: BeePlugin) {
@@ -230,7 +178,7 @@ class SettingTab extends PluginSettingTab {
 class BeeAPI {
 	private apiKey: string;
 	private baseUrl = 'https://api.bee.computer';
-	private limit = 10;
+	private batchSize = 10;  // Changed from limit to batchSize
 
 	constructor(apiKey: string) {
 		this.apiKey = apiKey;
@@ -242,18 +190,14 @@ class BeeAPI {
 
 	async getBeeDaily(date: Date): Promise<any[]> {
 		const allBeeDaily: any[] = [];
-		let limit: string | null = null;
-		let page: string | null = null;
-
-		const params = new URLSearchParams({
-			page: this.page.toString(),
-			limit: this.batchSize.toString()
-		});
+		let currentPage = 1;
+		let totalPages = 1;
 
 		do {
-			if (cursor) {
-				params.set('cursor', cursor);
-			}
+			const params = new URLSearchParams({
+				page: currentPage.toString(),
+				limit: this.batchSize.toString()
+			});
 
 			try {
 				const response = await requestUrl({
@@ -270,16 +214,20 @@ class BeeAPI {
 				}
 
 				const data = response.json;
-				const lifelogs = data.data?.lifelogs || [];
-				allBeeDaily.push(...lifelogs);
+				const dailyinfo = data.data?.dailyinfo || [];
+				allBeeDaily.push(...dailyinfo);
 
-				cursor = data.meta?.lifelogs?.nextCursor || null;
+				// Update pagination info
+				currentPage = data.meta?.currentPage || 1;
+				totalPages = data.meta?.totalPages || 1;
+				currentPage++; // Move to next page
+
 			} catch (error) {
-				console.error('Error fetching lifelogs:', error);
+				console.error('Error fetching Bee Daily entries:', error);
 				throw error;
 			}
-		} while (cursor);
+		} while (currentPage <= totalPages);
 
-		return allLifelogs;
+		return allBeeDaily;
 	}
 }
