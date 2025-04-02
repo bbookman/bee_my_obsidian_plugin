@@ -9,6 +9,7 @@ import {
     addIcon,
     TFile
 } from 'obsidian';
+import { Logger } from './utils/logger';
 
 interface BeeObsidianSettings{
 	apiKey: string;
@@ -22,13 +23,26 @@ const DEFAULT_SETTINGS: BeeObsidianSettings = {
 	startDate: '2025-02-09'
 }
 
+interface BeeMessage {
+    role: string;
+    content: string;
+}
+
+interface BeeConversation {
+    id: string;
+    created_at: string;
+    messages: BeeMessage[];
+}
+
 export default class BeePlugin extends Plugin {
 	settings: BeeObsidianSettings;
 	api: BeeAPI;
 
 	async onload() {
+		Logger.setApp(this.app);
+		await Logger.log('Plugin loading...');
 		await this.loadSettings();
-		this.api = new BeeAPI(this.settings.apiKey);
+		this.api = new BeeAPI(this.settings.apiKey, this.app);
 
 		// Add settings tab
 		this.addSettingTab(new BeeObsidianSettingTab(this.app, this));
@@ -38,12 +52,24 @@ export default class BeePlugin extends Plugin {
 			await this.syncBeeDaily();
 		});
 
+		this.addRibbonIcon('messages', 'Sync Bee Conversations', async () => {
+			await this.syncBeeConversations();
+		});
+
 		// Add command for syncing
 		this.addCommand({
 			id: 'sync-bee-daily',
 			name: 'Sync Bee Daily',
 			callback: async () => {
 				await this.syncBeeDaily();
+			}
+		});
+
+		this.addCommand({
+			id: 'sync-bee-conversations',
+			name: 'Sync Bee Conversations',
+			callback: async () => {
+				await this.syncBeeConversations();
 			}
 		});
 	}
@@ -73,25 +99,30 @@ export default class BeePlugin extends Plugin {
 			const folderPath = normalizePath(this.settings.folderPath);
 			await this.ensureFolderExists(folderPath);
 
-			const lastSyncedDate = await this.getLastSyncedDate();
-			const startDate = lastSyncedDate || new Date(this.settings.startDate);
-			const endDate = new Date();
-
 			new Notice('Starting Bee Daily sync...');
+			
+			// Get all entries without date filtering
+			const logs = await this.api.getBeeDaily();
 
-			const currentDate = new Date(startDate);
-			while (currentDate <= endDate) {
-				const dateStr = currentDate.toISOString().split('T')[0];
-				const logs = await this.api.getBeeDaily(currentDate);
+			if (logs && logs.length > 0) {
+				// Group entries by date
+				const entriesByDate = new Map<string, any[]>();
+				
+				logs.forEach(log => {
+					const dateStr = new Date(log.date).toISOString().split('T')[0];
+					if (!entriesByDate.has(dateStr)) {
+						entriesByDate.set(dateStr, []);
+					}
+					entriesByDate.get(dateStr)?.push(log);
+				});
 
-				if (logs && logs.length > 0) {
-					const content = `# ${dateStr}\n\n${logs.map(log => log.content).join('\n\n')}`;
+				// Write files for each date
+				for (const [dateStr, dateEntries] of entriesByDate) {
+					const content = `# ${dateStr}\n\n${dateEntries.map(entry => entry.content).join('\n\n')}`;
 					const filePath = `${folderPath}/${dateStr}.md`;
 					await this.app.vault.adapter.write(filePath, content);
 					new Notice(`Synced entries for ${dateStr}`);
 				}
-
-				currentDate.setDate(currentDate.getDate() + 1);
 			}
 
 			new Notice('Bee Daily sync complete!');
@@ -101,13 +132,48 @@ export default class BeePlugin extends Plugin {
 		}
 	}
 
+	async syncBeeConversations() {
+		if (!this.settings.apiKey) {
+			new Notice('Please set your Bee API key in settings');
+			return;
+		}
+
+		try {
+			const folderPath = normalizePath(this.settings.folderPath);
+			await this.ensureFolderExists(folderPath);
+
+			new Notice('Starting Bee Conversations sync...');
+			
+			const conversations = await this.api.getBeeConversations();
+
+			if (conversations && conversations.length > 0) {
+				const content = conversations.map((conv: BeeConversation) => `
+## ${new Date(conv.created_at).toISOString()}
+
+### Conversation ID: ${conv.id}
+
+${conv.messages.map((msg: BeeMessage) => `- **${msg.role}**: ${msg.content}`).join('\n')}
+				`).join('\n---\n');
+
+				const filePath = `${folderPath}/conversations.md`;
+				await this.app.vault.adapter.write(filePath, `# Bee Conversations\n\n${content}`);
+				new Notice(`Synced ${conversations.length} conversations`);
+			}
+
+			new Notice('Bee Conversations sync complete!');
+		} catch (error) {
+			console.error('Error syncing Bee Conversations:', error);
+			new Notice('Error syncing Bee Conversations. Check console for details.');
+		}
+	}
+
 	private async ensureFolderExists(path: string) {
 		const folderExists = await this.app.vault.adapter.exists(path);
 		if (!folderExists) {
 			await this.app.vault.createFolder(path);
 		}
 	}
-// assists in avoidance of overwriting files
+
 	private async getLastSyncedDate(): Promise<Date | null> {
 		const folderPath = normalizePath(this.settings.folderPath);
 		try {
@@ -176,21 +242,63 @@ class BeeObsidianSettingTab extends PluginSettingTab {
 class BeeAPI {
 	private apiKey: string;
 	private baseUrl = 'https://api.bee.computer';
-	private batchSize = 10;  // Changed from limit to batchSize
+	private batchSize = 10;
+	private app: App;
 
-	constructor(apiKey: string) {
+	constructor(apiKey: string, app: App) {
 		this.apiKey = apiKey;
+		this.app = app;
 	}
 
 	setApiKey(apiKey: string) {
 		this.apiKey = apiKey;
 	}
 
-	async getBeeDaily(date: Date): Promise<any[]> {
+	// Add this method to the BeeAPI class
+	private async logToFile(message: string) {
+		try {
+			const logFolderPath = 'Bee Daily';
+			const logFilePath = `${logFolderPath}/api-logs.md`;
+			
+			// First ensure the folder exists
+			const folderExists = await this.app.vault.adapter.exists(logFolderPath);
+			if (!folderExists) {
+				console.log('Creating log folder:', logFolderPath);
+				await this.app.vault.createFolder(logFolderPath);
+			}
+
+			const timestamp = new Date().toISOString();
+			const logMessage = `\n## ${timestamp}\n${message}\n`;
+			
+			console.log('Writing to log file:', logFilePath);
+			console.log('Log message:', logMessage);
+			
+			// Append to existing log file or create new one
+			const exists = await this.app.vault.adapter.exists(logFilePath);
+			if (exists) {
+				console.log('Log file exists, appending content');
+				const currentContent = await this.app.vault.adapter.read(logFilePath);
+				await this.app.vault.adapter.write(logFilePath, currentContent + logMessage);
+			} else {
+				console.log('Creating new log file');
+				await this.app.vault.adapter.write(logFilePath, logMessage);
+			}
+			
+			console.log('Successfully wrote to log file');
+		} catch (error) {
+			console.error('Failed to write to log file:', error);
+			console.error('Error details:', {
+				name: error.name,
+				message: error.message,
+				stack: error.stack
+			});
+		}
+	}
+
+	async getBeeDaily(): Promise<any[]> {
 		const allBeeDaily: any[] = [];
 		let currentPage = 1;
 		let totalPages = 1;
-		const targetDateStr = date.toISOString().split('T')[0];
 
 		do {
 			const params = new URLSearchParams({
@@ -198,9 +306,17 @@ class BeeAPI {
 				limit: this.batchSize.toString()
 			});
 
+			const apiUrl = `${this.baseUrl}/v1/me/conversations?${params.toString()}`;
+			await this.logToFile(`
+=== BEE API REQUEST ===
+URL: ${apiUrl}
+Page: ${currentPage}
+Batch Size: ${this.batchSize}
+			`);
+
 			try {
 				const response = await requestUrl({
-					url: `${this.baseUrl}/v1/lifelogs?${params.toString()}`,
+					url: apiUrl,
 					method: 'GET',
 					headers: {
 						'X-API-Key': this.apiKey,
@@ -208,20 +324,19 @@ class BeeAPI {
 					}
 				});
 
+				await this.logToFile(`
+=== BEE API RESPONSE ===
+Status: ${response.status}
+Response: ${JSON.stringify(response.json, null, 2)}
+				`);
+
 				if (!response.json) {
 					throw new Error('Invalid response format');
 				}
 
 				const data = response.json;
-				const dailyinfo = data.data?.dailyinfo || [];
-				
-				// Filter entries for the target date
-				const filteredDailyInfo = dailyinfo.filter((entry: any) => {
-					const entryDate = new Date(entry.date).toISOString().split('T')[0];
-					return entryDate === targetDateStr;
-				});
-				
-				allBeeDaily.push(...filteredDailyInfo);
+				const dailyinfo = data.data || [];
+				allBeeDaily.push(...dailyinfo);
 
 				// Update pagination info
 				currentPage = data.meta?.currentPage || 1;
@@ -229,11 +344,59 @@ class BeeAPI {
 				currentPage++;
 
 			} catch (error) {
-				console.error('Error fetching Bee Daily entries:', error);
+				await this.logToFile(`
+=== BEE API ERROR ===
+Error: ${error.message}
+Stack: ${error.stack}
+				`);
 				throw error;
 			}
 		} while (currentPage <= totalPages);
 
 		return allBeeDaily;
+	}
+
+	async getBeeConversations(): Promise<BeeConversation[]> {
+		const apiUrl = `${this.baseUrl}/v1/me/conversations`;
+		
+		await this.logToFile(`
+=== BEE API REQUEST ===
+URL: ${apiUrl}
+Method: GET
+Headers:
+  Accept: application/json
+  X-API-Key: [REDACTED]
+		`);
+
+		try {
+			const response = await requestUrl({
+				url: apiUrl,
+				method: 'GET',
+				headers: {
+					'X-API-Key': this.apiKey,
+					'Accept': 'application/json'
+				}
+			});
+
+			await this.logToFile(`
+=== BEE API RESPONSE ===
+Status: ${response.status}
+Response: ${JSON.stringify(response.json, null, 2)}
+			`);
+
+			if (!response.json) {
+				throw new Error('Invalid response format');
+			}
+
+			return response.json as BeeConversation[];
+
+		} catch (error) {
+			await this.logToFile(`
+=== BEE API ERROR ===
+Error: ${error.message}
+Stack: ${error.stack}
+			`);
+			throw error;
+		}
 	}
 }
