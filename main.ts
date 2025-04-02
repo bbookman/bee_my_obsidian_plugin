@@ -146,24 +146,26 @@ export default class BeePlugin extends Plugin {
 
 		try {
 			const folderPath = normalizePath(this.settings.folderPath);
-			console.log('Using folderPath:', folderPath); // Debug log
+			console.log('Starting sync process with folder path:', folderPath);
 			await this.ensureFolderExists(folderPath);
 
-			new Notice('Starting Bee Conversations sync...');
-			
+			console.log('Fetching conversations from API...');
 			const conversations = await this.api.getBeeConversations();
+			console.log(`Received ${conversations?.length || 0} conversations from API`);
 
 			if (conversations && conversations.length > 0) {
+				// Add debugger statement here
+				debugger;
+				console.log('About to format conversations to markdown...');
 				const content = this.formatConversationsToMarkdown(conversations);
-
+				
 				const filePath = `${folderPath}/conversations.md`;
-
-				// Log the file path and content
-				console.log(`Writing file: ${filePath}`);
-				console.log(`File content:\n${content}`);
-
-				await this.app.vault.adapter.write(filePath, `# Bee Conversations\n\n${content}`);
-				new Notice(`Synced ${conversations.length} conversations`);
+				console.log(`Writing markdown to file: ${filePath}`);
+				
+				// Add another debugger before file write
+				debugger;
+				await this.app.vault.adapter.write(filePath, content);
+				console.log('Successfully wrote markdown file');
 			}
 
 			new Notice('Bee Conversations sync complete!');
@@ -204,7 +206,9 @@ export default class BeePlugin extends Plugin {
 
 		conversations.forEach((conv: BeeConversation) => {
 			const dateStr = new Date(conv.created_at).toISOString().split('T')[0];
-			console.log('Processing conversation for date:', dateStr);
+			// Truncate summary to 10 words
+			const truncatedSummary = conv.summary.split(' ').slice(0, 10).join(' ') + '...';
+			console.log(`Processing conversation: Date=${dateStr}, ID=${conv.id}, Summary="${truncatedSummary}"`);
 			
 			if (!conversationsByDate.has(dateStr)) {
 				conversationsByDate.set(dateStr, []);
@@ -214,20 +218,23 @@ export default class BeePlugin extends Plugin {
 
 		let markdownContent = '';
 		for (const [dateStr, dateConversations] of conversationsByDate) {
-			console.log(`Formatting ${dateConversations.length} conversations for ${dateStr}`);
+			console.log(`\nFormatting ${dateConversations.length} conversations for ${dateStr}`);
 			
 			markdownContent += `# Conversations for ${dateStr}\n\n`;
-			markdownContent += dateConversations.map((conv: BeeConversation) => `
+			markdownContent += dateConversations.map((conv: BeeConversation) => {
+				console.log(`Writing conversation ${conv.id}: "${conv.short_summary}"`);
+				return `
 # ${conv.short_summary}
 
 ## ${conv.summary}
 
 Address: ${conv.address}
-			`).join('\n---\n');
+				`;
+			}).join('\n---\n');
 			markdownContent += '\n\n';
 		}
 
-		console.log('Completed markdown formatting. Content length:', markdownContent.length);
+		console.log(`\nCompleted markdown formatting. Total content length: ${markdownContent.length}`);
 		return markdownContent;
 	}
 }
