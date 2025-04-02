@@ -1,41 +1,78 @@
-import { App, Plugin, PluginSettingTab, Setting, normalizePath, Notice, requestUrl } from 'obsidian';
+import { 
+    App, 
+    Plugin, 
+    PluginSettingTab, 
+    Setting, 
+    normalizePath, 
+    Notice, 
+    requestUrl,
+    addIcon,
+    TFile
+} from 'obsidian';
+import { Logger } from './utils/logger';
 
-// Remember to rename these classes and interfaces!
-
-interface LimitlessLifelogsSettings {
+interface BeeObsidianSettings{
 	apiKey: string;
 	folderPath: string;
 	startDate: string;
 }
 
-const DEFAULT_SETTINGS: LimitlessLifelogsSettings = {
+const DEFAULT_SETTINGS: BeeObsidianSettings = {
 	apiKey: '',
-	folderPath: 'Limitless Lifelogs',
+	folderPath: 'Bee Daily',
 	startDate: '2025-02-09'
 }
 
-export default class LimitlessLifelogsPlugin extends Plugin {
-	settings: LimitlessLifelogsSettings;
-	api: LimitlessAPI;
+interface BeeMessage {
+    role: string;
+    content: string;
+}
+
+interface BeeConversation {
+    id: string;
+    created_at: string;
+    short_summary: string; // Already added
+    summary: string;       // Add this property
+    address: string;       // Add this property
+    messages: BeeMessage[];
+}
+
+export default class BeePlugin extends Plugin {
+	settings: BeeObsidianSettings;
+	api: BeeAPI;
 
 	async onload() {
+		Logger.setApp(this.app);
+		await Logger.log('Plugin loading...');
 		await this.loadSettings();
-		this.api = new LimitlessAPI(this.settings.apiKey);
+		this.api = new BeeAPI(this.settings.apiKey, this.app);
 
 		// Add settings tab
-		this.addSettingTab(new LimitlessLifelogsSettingTab(this.app, this));
+		this.addSettingTab(new BeeObsidianSettingTab(this.app, this));
 
 		// Add ribbon icon for syncing
-		this.addRibbonIcon('sync', 'Sync Limitless Lifelogs', async () => {
-			await this.syncLifelogs();
+		this.addRibbonIcon('sync', 'Sync Bee Daily', async () => {
+			await this.syncBeeDaily();
+		});
+
+		this.addRibbonIcon('messages', 'Sync Bee Conversations', async () => {
+			await this.syncBeeConversations();
 		});
 
 		// Add command for syncing
 		this.addCommand({
-			id: 'sync-limitless-lifelogs',
-			name: 'Sync Limitless Lifelogs',
+			id: 'sync-bee-daily',
+			name: 'Sync Bee Daily',
 			callback: async () => {
-				await this.syncLifelogs();
+				await this.syncBeeDaily();
+			}
+		});
+
+		this.addCommand({
+			id: 'sync-bee-conversations',
+			name: 'Sync Bee Conversations',
+			callback: async () => {
+				await this.syncBeeConversations();
 			}
 		});
 	}
@@ -55,49 +92,93 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 		}
 	}
 
-	async syncLifelogs() {
+	async syncBeeDaily() {
 		if (!this.settings.apiKey) {
-			new Notice('Please set your Limitless API key in settings');
+			new Notice('Please set your Bee API key in settings');
 			return;
 		}
 
 		try {
-			// Ensure the folder exists
 			const folderPath = normalizePath(this.settings.folderPath);
+			console.log('Using folderPath:', folderPath); // Debug log
 			await this.ensureFolderExists(folderPath);
 
-			// Get the last synced date
-			const lastSyncedDate = await this.getLastSyncedDate();
-			const startDate = lastSyncedDate || new Date(this.settings.startDate);
-			const endDate = new Date();
+			new Notice('Starting Bee Daily sync...');
+			
+			const logs = await this.api.getBeeDaily();
 
-			new Notice('Starting Limitless lifelog sync...');
+			if (logs && logs.length > 0) {
+				const entriesByDate = new Map<string, any[]>();
+				
+				logs.forEach(log => {
+					const dateStr = new Date(log.date).toISOString().split('T')[0];
+					if (!entriesByDate.has(dateStr)) {
+						entriesByDate.set(dateStr, []);
+					}
+					entriesByDate.get(dateStr)?.push(log);
+				});
 
-			const currentDate = new Date(startDate);
-			while (currentDate <= endDate) {
-				const dateStr = currentDate.toISOString().split('T')[0];
-				const logs = await this.api.getLifelogs(currentDate);
-
-				if (logs && logs.length > 0) {
-					const content = logs.map(log => this.formatLifelogMarkdown(log)).join('\n\n');
+				for (const [dateStr, dateEntries] of entriesByDate) {
+					const content = `# ${dateStr}\n\n${dateEntries.map(entry => entry.content).join('\n\n')}`;
 					const filePath = `${folderPath}/${dateStr}.md`;
+
+					// Log the file path and content
+					console.log(`Writing file: ${filePath}`);
+					console.log(`File content:\n${content}`);
+
 					await this.app.vault.adapter.write(filePath, content);
 					new Notice(`Synced entries for ${dateStr}`);
 				}
-
-				currentDate.setDate(currentDate.getDate() + 1);
 			}
 
-			new Notice('Limitless lifelog sync complete!');
+			new Notice('Bee Daily sync complete!');
 		} catch (error) {
-			console.error('Error syncing lifelogs:', error);
-			new Notice('Error syncing Limitless lifelogs. Check console for details.');
+			console.error('Error syncing Bee Days:', error);
+			new Notice('Error syncing Bee Days. Check console for details.');
+		}
+	}
+
+	async syncBeeConversations() {
+		if (!this.settings.apiKey) {
+			new Notice('Please set your Bee API key in settings');
+			return;
+		}
+
+		try {
+			const folderPath = normalizePath(this.settings.folderPath);
+			console.log('Starting sync process with folder path:', folderPath);
+			await this.ensureFolderExists(folderPath);
+
+			console.log('Fetching conversations from API...');
+			const conversations = await this.api.getBeeConversations();
+			console.log(`Received ${conversations?.length || 0} conversations from API`);
+
+			if (conversations && conversations.length > 0) {
+				// Add debugger statement here
+				debugger;
+				console.log('About to format conversations to markdown...');
+				const content = this.formatConversationsToMarkdown(conversations);
+				
+				const filePath = `${folderPath}/conversations.md`;
+				console.log(`Writing markdown to file: ${filePath}`);
+				
+				// Add another debugger before file write
+				debugger;
+				await this.app.vault.adapter.write(filePath, content);
+				console.log('Successfully wrote markdown file');
+			}
+
+			new Notice('Bee Conversations sync complete!');
+		} catch (error) {
+			console.error('Error syncing Bee Conversations:', error);
+			new Notice('Error syncing Bee Conversations. Check console for details.');
 		}
 	}
 
 	private async ensureFolderExists(path: string) {
 		const folderExists = await this.app.vault.adapter.exists(path);
 		if (!folderExists) {
+			console.log('Creating folder:', path); // Debug log
 			await this.app.vault.createFolder(path);
 		}
 	}
@@ -118,71 +199,51 @@ export default class LimitlessLifelogsPlugin extends Plugin {
 		}
 	}
 
-	private formatLifelogMarkdown(lifelog: any): string {
-		if (lifelog.markdown) {
-			return lifelog.markdown;
-		}
+	private formatConversationsToMarkdown(conversations: BeeConversation[]): string {
+		console.log('Starting markdown formatting for', conversations.length, 'conversations');
+		
+		const conversationsByDate = new Map<string, BeeConversation[]>();
 
-		const content: string[] = [];
-
-		if (lifelog.title) {
-			content.push(`# ${lifelog.title}\n`);
-		}
-
-		if (lifelog.contents) {
-			let currentSection = '';
-			let sectionMessages: string[] = [];
-
-			for (const node of lifelog.contents) {
-				if (node.type === 'heading2') {
-					if (currentSection && sectionMessages.length > 0) {
-						content.push(`## ${currentSection}\n`);
-						content.push(...sectionMessages);
-						content.push('');
-					}
-					currentSection = node.content;
-					sectionMessages = [];
-				} else if (node.type === 'blockquote') {
-					const speaker = node.speakerName || 'Speaker';
-					let timestamp = '';
-					if (node.startTime) {
-						const dt = new Date(node.startTime);
-						timestamp = dt.toLocaleString('en-US', {
-							month: '2-digit',
-							day: '2-digit',
-							year: '2-digit',
-							hour: 'numeric',
-							minute: '2-digit',
-							hour12: true
-						});
-						timestamp = `(${timestamp})`;
-					}
-
-					const message = `- ${speaker} ${timestamp}: ${node.content}`;
-					if (currentSection) {
-						sectionMessages.push(message);
-					} else {
-						content.push(message);
-					}
-				} else if (node.type !== 'heading1') {
-					content.push(node.content);
-				}
+		conversations.forEach((conv: BeeConversation) => {
+			const dateStr = new Date(conv.created_at).toISOString().split('T')[0];
+			// Truncate summary to 10 words
+			const truncatedSummary = conv.summary.split(' ').slice(0, 10).join(' ') + '...';
+			console.log(`Processing conversation: Date=${dateStr}, ID=${conv.id}, Summary="${truncatedSummary}"`);
+			
+			if (!conversationsByDate.has(dateStr)) {
+				conversationsByDate.set(dateStr, []);
 			}
+			conversationsByDate.get(dateStr)?.push(conv);
+		});
 
-			if (currentSection && sectionMessages.length > 0) {
-				content.push(`## ${currentSection}\n`);
-				content.push(...sectionMessages);
-			}
+		let markdownContent = '';
+		for (const [dateStr, dateConversations] of conversationsByDate) {
+			console.log(`\nFormatting ${dateConversations.length} conversations for ${dateStr}`);
+			
+			markdownContent += `# Conversations for ${dateStr}\n\n`;
+			markdownContent += dateConversations.map((conv: BeeConversation) => {
+				console.log(`Writing conversation ${conv.id}: "${conv.short_summary}"`);
+				return `
+# ${conv.short_summary}
+
+## ${conv.summary}
+
+Address: ${conv.address}
+				`;
+			}).join('\n---\n');
+			markdownContent += '\n\n';
 		}
 
-		return content.join('\n\n');
+		console.log(`\nCompleted markdown formatting. Total content length: ${markdownContent.length}`);
+		return markdownContent;
 	}
 }
 
-class LimitlessLifelogsSettingTab extends PluginSettingTab {
-	plugin: LimitlessLifelogsPlugin;
+// Rename SettingTab to BeeObsidianSettingTab
+class BeeObsidianSettingTab extends PluginSettingTab {
+	plugin: BeePlugin;
 
-	constructor(app: App, plugin: LimitlessLifelogsPlugin) {
+	constructor(app: App, plugin: BeePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -193,9 +254,9 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('API Key')
-			.setDesc('Your Limitless AI API key')
+			.setDesc('Your Bee AI API key')
 			.addText(text => text
-				.setPlaceholder('Enter your API key')
+				.setPlaceholder('Enter your BeeAPI key')
 				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
 					this.plugin.settings.apiKey = value;
@@ -204,7 +265,7 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Folder Path')
-			.setDesc('Where to store the lifelog entries')
+			.setDesc('Where to store the Bee Daily files')
 			.addText(text => text
 				.setPlaceholder('Folder path')
 				.setValue(this.plugin.settings.folderPath)
@@ -226,40 +287,81 @@ class LimitlessLifelogsSettingTab extends PluginSettingTab {
 	}
 }
 
-class LimitlessAPI {
+class BeeAPI {
 	private apiKey: string;
-	private baseUrl = 'https://api.limitless.ai';
+	private baseUrl = 'https://api.bee.computer';
 	private batchSize = 10;
+	private app: App;
 
-	constructor(apiKey: string) {
+	constructor(apiKey: string, app: App) {
 		this.apiKey = apiKey;
+		this.app = app;
 	}
 
 	setApiKey(apiKey: string) {
 		this.apiKey = apiKey;
 	}
 
-	async getLifelogs(date: Date): Promise<any[]> {
-		const allLifelogs: any[] = [];
-		let cursor: string | null = null;
+	private async logToFile(message: string) {
+		try {
+			const logFolderPath = 'Bee Daily';
+			const logFilePath = `${logFolderPath}/api-logs.md`;
+			
+			 // Console log for debugging
+			console.log('Attempting to write to log file:', logFilePath);
+			console.log('Message to write:', message);
 
-		const params = new URLSearchParams({
-			date: date.toISOString().split('T')[0],
-			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-			includeMarkdown: 'true',
-			includeHeadings: 'true',
-			direction: 'asc',
-			limit: this.batchSize.toString()
-		});
+			// First ensure the folder exists
+			const folderExists = await this.app.vault.adapter.exists(logFolderPath);
+			if (!folderExists) {
+				console.log('Creating log folder:', logFolderPath);
+				await this.app.vault.createFolder(logFolderPath);
+			}
+
+			const timestamp = new Date().toISOString();
+			const logMessage = `\n## ${timestamp}\n${message}\n`;
+			
+			// Append to existing log file or create new one
+			const exists = await this.app.vault.adapter.exists(logFilePath);
+			if (exists) {
+				console.log('Log file exists, appending content');
+				const currentContent = await this.app.vault.adapter.read(logFilePath);
+				await this.app.vault.adapter.write(logFilePath, currentContent + logMessage);
+			} else {
+				console.log('Creating new log file');
+				await this.app.vault.adapter.write(logFilePath, logMessage);
+			}
+			
+			console.log('Successfully wrote to log file');
+
+		} catch (error) {
+			console.error('Failed to write to log file:', error);
+			throw error;
+		}
+	}
+
+	async getBeeDaily(): Promise<any[]> {
+		const allBeeDaily: any[] = [];
+		let currentPage = 1;
+		let totalPages = 1;
 
 		do {
-			if (cursor) {
-				params.set('cursor', cursor);
-			}
+			const params = new URLSearchParams({
+				page: currentPage.toString(),
+				limit: this.batchSize.toString()
+			});
+
+			const apiUrl = `${this.baseUrl}/v1/me/conversations?${params.toString()}`;
+			await this.logToFile(`
+=== BEE API REQUEST ===
+URL: ${apiUrl}
+Page: ${currentPage}
+Batch Size: ${this.batchSize}
+			`);
 
 			try {
 				const response = await requestUrl({
-					url: `${this.baseUrl}/v1/lifelogs?${params.toString()}`,
+					url: apiUrl,
 					method: 'GET',
 					headers: {
 						'X-API-Key': this.apiKey,
@@ -267,21 +369,77 @@ class LimitlessAPI {
 					}
 				});
 
+				await this.logToFile(`
+=== BEE API RESPONSE ===
+Status: ${response.status}
+`);
+
 				if (!response.json) {
 					throw new Error('Invalid response format');
 				}
 
 				const data = response.json;
-				const lifelogs = data.data?.lifelogs || [];
-				allLifelogs.push(...lifelogs);
+				const dailyinfo = data.data || [];
+				allBeeDaily.push(...dailyinfo);
 
-				cursor = data.meta?.lifelogs?.nextCursor || null;
+				// Update pagination info
+				currentPage = data.meta?.currentPage || 1;
+				totalPages = data.meta?.totalPages || 1;
+				currentPage++;
+
 			} catch (error) {
-				console.error('Error fetching lifelogs:', error);
+				await this.logToFile(`
+=== BEE API ERROR ===
+Error: ${error.message}
+Stack: ${error.stack}
+				`);
 				throw error;
 			}
-		} while (cursor);
+		} while (currentPage <= totalPages);
 
-		return allLifelogs;
+		return allBeeDaily;
+	}
+
+	async getBeeConversations(): Promise<BeeConversation[]> {
+		const apiUrl = `${this.baseUrl}/v1/me/conversations`;
+		
+		await this.logToFile(`
+=== BEE API REQUEST ===
+URL: ${apiUrl}
+Method: GET
+Headers:
+  Accept: application/json
+  X-API-Key: [REDACTED]
+		`);
+
+		try {
+			const response = await requestUrl({
+				url: apiUrl,
+				method: 'GET',
+				headers: {
+					'X-API-Key': this.apiKey,
+					'Accept': 'application/json'
+				}
+			});
+
+			await this.logToFile(`
+=== BEE API RESPONSE ===
+Status: ${response.status}
+`);
+
+			if (!response.json) {
+				throw new Error('Invalid response format');
+			}
+
+			return response.json as BeeConversation[];
+
+		} catch (error) {
+			await this.logToFile(`
+=== BEE API ERROR ===
+Error: ${error.message}
+Stack: ${error.stack}
+			`);
+			throw error;
+		}
 	}
 }
