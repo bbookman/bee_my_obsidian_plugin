@@ -198,10 +198,14 @@ export default class BeePlugin extends Plugin {
 	}
 
 	private formatConversationsToMarkdown(conversations: BeeConversation[]): string {
+		console.log('Starting markdown formatting for', conversations.length, 'conversations');
+		
 		const conversationsByDate = new Map<string, BeeConversation[]>();
 
 		conversations.forEach((conv: BeeConversation) => {
 			const dateStr = new Date(conv.created_at).toISOString().split('T')[0];
+			console.log('Processing conversation for date:', dateStr);
+			
 			if (!conversationsByDate.has(dateStr)) {
 				conversationsByDate.set(dateStr, []);
 			}
@@ -210,6 +214,8 @@ export default class BeePlugin extends Plugin {
 
 		let markdownContent = '';
 		for (const [dateStr, dateConversations] of conversationsByDate) {
+			console.log(`Formatting ${dateConversations.length} conversations for ${dateStr}`);
+			
 			markdownContent += `# Conversations for ${dateStr}\n\n`;
 			markdownContent += dateConversations.map((conv: BeeConversation) => `
 # ${conv.short_summary}
@@ -221,9 +227,7 @@ Address: ${conv.address}
 			markdownContent += '\n\n';
 		}
 
-		// Log the generated markdown content
-		console.log('Generated markdown content:\n', markdownContent);
-
+		console.log('Completed markdown formatting. Content length:', markdownContent.length);
 		return markdownContent;
 	}
 }
@@ -291,12 +295,15 @@ class BeeAPI {
 		this.apiKey = apiKey;
 	}
 
-	// Add this method to the BeeAPI class
 	private async logToFile(message: string) {
 		try {
 			const logFolderPath = 'Bee Daily';
 			const logFilePath = `${logFolderPath}/api-logs.md`;
 			
+			 // Console log for debugging
+			console.log('Attempting to write to log file:', logFilePath);
+			console.log('Message to write:', message);
+
 			// First ensure the folder exists
 			const folderExists = await this.app.vault.adapter.exists(logFolderPath);
 			if (!folderExists) {
@@ -306,9 +313,6 @@ class BeeAPI {
 
 			const timestamp = new Date().toISOString();
 			const logMessage = `\n## ${timestamp}\n${message}\n`;
-			
-			console.log('Writing to log file:', logFilePath);
-			console.log('Log message:', logMessage);
 			
 			// Append to existing log file or create new one
 			const exists = await this.app.vault.adapter.exists(logFilePath);
@@ -322,13 +326,10 @@ class BeeAPI {
 			}
 			
 			console.log('Successfully wrote to log file');
+
 		} catch (error) {
 			console.error('Failed to write to log file:', error);
-			console.error('Error details:', {
-				name: error.name,
-				message: error.message,
-				stack: error.stack
-			});
+			throw error;
 		}
 	}
 
@@ -364,8 +365,7 @@ Batch Size: ${this.batchSize}
 				await this.logToFile(`
 === BEE API RESPONSE ===
 Status: ${response.status}
-Response: ${JSON.stringify(response.json, null, 2)}
-				`);
+`);
 
 				if (!response.json) {
 					throw new Error('Invalid response format');
@@ -418,8 +418,7 @@ Headers:
 			await this.logToFile(`
 === BEE API RESPONSE ===
 Status: ${response.status}
-Response: ${JSON.stringify(response.json, null, 2)}
-			`);
+`);
 
 			if (!response.json) {
 				throw new Error('Invalid response format');
