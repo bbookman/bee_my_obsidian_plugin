@@ -31,6 +31,9 @@ interface BeeMessage {
 interface BeeConversation {
     id: string;
     created_at: string;
+    short_summary: string; // Already added
+    summary: string;       // Add this property
+    address: string;       // Add this property
     messages: BeeMessage[];
 }
 
@@ -97,15 +100,14 @@ export default class BeePlugin extends Plugin {
 
 		try {
 			const folderPath = normalizePath(this.settings.folderPath);
+			console.log('Using folderPath:', folderPath); // Debug log
 			await this.ensureFolderExists(folderPath);
 
 			new Notice('Starting Bee Daily sync...');
 			
-			// Get all entries without date filtering
 			const logs = await this.api.getBeeDaily();
 
 			if (logs && logs.length > 0) {
-				// Group entries by date
 				const entriesByDate = new Map<string, any[]>();
 				
 				logs.forEach(log => {
@@ -116,10 +118,14 @@ export default class BeePlugin extends Plugin {
 					entriesByDate.get(dateStr)?.push(log);
 				});
 
-				// Write files for each date
 				for (const [dateStr, dateEntries] of entriesByDate) {
 					const content = `# ${dateStr}\n\n${dateEntries.map(entry => entry.content).join('\n\n')}`;
 					const filePath = `${folderPath}/${dateStr}.md`;
+
+					// Log the file path and content
+					console.log(`Writing file: ${filePath}`);
+					console.log(`File content:\n${content}`);
+
 					await this.app.vault.adapter.write(filePath, content);
 					new Notice(`Synced entries for ${dateStr}`);
 				}
@@ -140,6 +146,7 @@ export default class BeePlugin extends Plugin {
 
 		try {
 			const folderPath = normalizePath(this.settings.folderPath);
+			console.log('Using folderPath:', folderPath); // Debug log
 			await this.ensureFolderExists(folderPath);
 
 			new Notice('Starting Bee Conversations sync...');
@@ -147,15 +154,14 @@ export default class BeePlugin extends Plugin {
 			const conversations = await this.api.getBeeConversations();
 
 			if (conversations && conversations.length > 0) {
-				const content = conversations.map((conv: BeeConversation) => `
-## ${new Date(conv.created_at).toISOString()}
-
-### Conversation ID: ${conv.id}
-
-${conv.messages.map((msg: BeeMessage) => `- **${msg.role}**: ${msg.content}`).join('\n')}
-				`).join('\n---\n');
+				const content = this.formatConversationsToMarkdown(conversations);
 
 				const filePath = `${folderPath}/conversations.md`;
+
+				// Log the file path and content
+				console.log(`Writing file: ${filePath}`);
+				console.log(`File content:\n${content}`);
+
 				await this.app.vault.adapter.write(filePath, `# Bee Conversations\n\n${content}`);
 				new Notice(`Synced ${conversations.length} conversations`);
 			}
@@ -170,6 +176,7 @@ ${conv.messages.map((msg: BeeMessage) => `- **${msg.role}**: ${msg.content}`).jo
 	private async ensureFolderExists(path: string) {
 		const folderExists = await this.app.vault.adapter.exists(path);
 		if (!folderExists) {
+			console.log('Creating folder:', path); // Debug log
 			await this.app.vault.createFolder(path);
 		}
 	}
@@ -188,6 +195,36 @@ ${conv.messages.map((msg: BeeMessage) => `- **${msg.role}**: ${msg.content}`).jo
 		} catch {
 			return null;
 		}
+	}
+
+	private formatConversationsToMarkdown(conversations: BeeConversation[]): string {
+		const conversationsByDate = new Map<string, BeeConversation[]>();
+
+		conversations.forEach((conv: BeeConversation) => {
+			const dateStr = new Date(conv.created_at).toISOString().split('T')[0];
+			if (!conversationsByDate.has(dateStr)) {
+				conversationsByDate.set(dateStr, []);
+			}
+			conversationsByDate.get(dateStr)?.push(conv);
+		});
+
+		let markdownContent = '';
+		for (const [dateStr, dateConversations] of conversationsByDate) {
+			markdownContent += `# Conversations for ${dateStr}\n\n`;
+			markdownContent += dateConversations.map((conv: BeeConversation) => `
+# ${conv.short_summary}
+
+## ${conv.summary}
+
+Address: ${conv.address}
+			`).join('\n---\n');
+			markdownContent += '\n\n';
+		}
+
+		// Log the generated markdown content
+		console.log('Generated markdown content:\n', markdownContent);
+
+		return markdownContent;
 	}
 }
 
